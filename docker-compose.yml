@@ -1,0 +1,67 @@
+services:
+  app-db:
+    image: postgres:17
+    container_name: app-backup-view-db
+    env_file:
+      - .env
+    ports:
+      - "${LOCAL_DB_PORT}:5432"
+    volumes:
+      - backup_view_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  app-restore:
+    image: postgres:17
+    container_name: app-backup-view-restore
+    env_file:
+      - .env
+    depends_on:
+      app-db:
+        condition: service_healthy
+    volumes:
+      - ./backup:/backup:ro
+    command: >
+      bash -lc "
+      echo '[+] Restoring appLog backup...';
+
+      PGPASSWORD=\"$${POSTGRES_PASSWORD}\" pg_restore
+      -h \"$${DB_HOST}\"
+      -p \"$${DB_PORT}\"
+      -U \"$${POSTGRES_USER}\"
+      -d \"$${POSTGRES_DB}\"
+      --clean
+      --if-exists
+      /backup/applog.dump;
+
+      echo '[+] Restore completed.';
+      "
+    restart: "no"
+
+  app-pgweb:
+    image: sosedoff/pgweb
+    container_name: app-backup-view-pgweb
+    env_file:
+      - .env
+    depends_on:
+      app-db:
+        condition: service_healthy
+    ports:
+      - "${PGWEB_PORT}:8081"
+    command: >
+      sh -lc "
+      pgweb
+      --bind=0.0.0.0
+      --listen=8081
+      --auth-user=\"$${PGWEB_AUTH_USER}\"
+      --auth-pass=\"$${PGWEB_AUTH_PASSWORD}\"
+      --url=\"postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@$${DB_HOST}:$${DB_PORT}/$${POSTGRES_DB}?sslmode=disable\"
+      "
+    restart: unless-stopped
+
+volumes:
+  backup_view_db_data:
